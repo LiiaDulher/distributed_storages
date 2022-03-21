@@ -3,9 +3,8 @@ import hazelcast
 
 class DistributedMap:
 
-    def __init__(self):
-        hz = hazelcast.HazelcastClient()
-        self.map = hz.get_map("DistributedMap").blocking()
+    def __init__(self, client):
+        self.map = client.get_map("DistributedMap").blocking()
 
     def __getitem__(self, key):
         return self.map.get(key)
