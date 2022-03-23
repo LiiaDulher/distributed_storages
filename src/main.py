@@ -26,6 +26,7 @@ def no_locking(client_number):
         distributed_map.put(key, value)
     with threading.Lock():
         print("Finished client", client_number, "!  Result =", distributed_map.get(key))
+    client.shutdown()
 
 
 def pessimistic_locking(client_number):
@@ -46,6 +47,7 @@ def pessimistic_locking(client_number):
             distributed_map.unlock(key)
     with threading.Lock():
         print("Finished client", client_number, "!  Result =", distributed_map.get(key))
+    client.shutdown()
 
 
 def optimistic_locking(client_number):
@@ -64,6 +66,7 @@ def optimistic_locking(client_number):
                 break
     with threading.Lock():
         print("Finished client ", client_number, "! Result =", distributed_map.get(key))
+    client.shutdown()
 
 
 def test_map_with_lock():
@@ -101,17 +104,58 @@ def test_map_with_lock():
     client3.join()
 
 
-def bounded_queue_client(client_type):
+def bounded_queue_client(client_type, client_number):
     if client_type == "r":
-        pass
+        with threading.Lock():
+            print("Starting reading client", client_number)
+        client = hazelcast.HazelcastClient()
+        queue = client.get_queue("bounded_queue").blocking()
+        numbers = []
+        while True:
+            n = queue.take()
+            if n == -1:
+                break
+            numbers.append(n)
+        for n in numbers:
+            with threading.Lock():
+                print("Client ", client_number, " read ", n)
+        with threading.Lock():
+            print("Finished reading client", client_number)
+        client.shutdown()
     elif client_type == "w":
-        pass
+        print("Starting writing client")
+        client = hazelcast.HazelcastClient()
+        queue = client.get_queue("bounded_queue").blocking()
+        print("Putting values into queue.")
+        for i in range(100):
+            queue.put(i)
+        queue.put(-1)
+        if client_number == 2:
+            print("Trying to put into full queue:")
+            try:
+                queue.put(-2)
+                print("Extra put done.")
+            except hazelcast.errors.IllegalStateError:
+                print("Error! Queue is full. No more elements can be added.")
+        print("Finished writing client")
+        client.shutdown()
     else:
         return
 
 
-def test_bounded_queue():
-    pass
+def test_bounded_queue(test_type):
+    if test_type == 1:
+        bounded_queue_client("w", 2)
+        return
+    client1 = threading.Thread(target=bounded_queue_client, args=("r", 1,))
+    client2 = threading.Thread(target=bounded_queue_client, args=("r", 2,))
+    print("Start writing items into bounded queue.")
+    bounded_queue_client("w", 1)
+    print("Start reading items from queue.")
+    client1.start()
+    client2.start()
+    client1.join()
+    client2.join()
 
 
 def main():
@@ -124,7 +168,9 @@ def main():
     elif task == "2":
         test_map_with_lock()
     elif task == "3":
-        test_bounded_queue()
+        test_bounded_queue(1)
+    elif task == "4":
+        test_bounded_queue(2)
     else:
         print("No task with such number.")
 
