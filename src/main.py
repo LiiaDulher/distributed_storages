@@ -1,7 +1,7 @@
 import hazelcast
 import sys
 import time
-import multiprocessing
+import threading
 
 
 def test_information_distribution_on_nodes():
@@ -17,13 +17,15 @@ def no_locking(client_number):
     distributed_map = client.get_map("map1").blocking()
     key = "1"
     distributed_map.put(key, 0)
-    print("Starting", client_number)
+    with threading.Lock():
+        print("Starting client", client_number)
     for i in range(1000):
         value = distributed_map.get(key)
         time.sleep(0.01)
         value += 1
         distributed_map.put(key, value)
-    print("Finished", client_number, "!  Result =", distributed_map.get(key))
+    with threading.Lock():
+        print("Finished client", client_number, "!  Result =", distributed_map.get(key))
 
 
 def pessimistic_locking(client_number):
@@ -31,7 +33,8 @@ def pessimistic_locking(client_number):
     distributed_map = client.get_map("map2").blocking()
     key = "1"
     distributed_map.put(key, 0)
-    print("Starting", client_number)
+    with threading.Lock():
+        print("Starting client", client_number)
     for i in range(1000):
         distributed_map.lock(key)
         try:
@@ -41,7 +44,8 @@ def pessimistic_locking(client_number):
             distributed_map.put(key, value)
         finally:
             distributed_map.unlock(key)
-    print("Finished", client_number, "!  Result =", distributed_map.get(key))
+    with threading.Lock():
+        print("Finished client", client_number, "!  Result =", distributed_map.get(key))
 
 
 def optimistic_locking(client_number):
@@ -49,24 +53,52 @@ def optimistic_locking(client_number):
     distributed_map = client.get_map("map3").blocking()
     key = "1"
     distributed_map.put(key, 0)
-    print("Starting", client_number)
+    with threading.Lock():
+        print("Starting client", client_number)
     for i in range(1000):
         while True:
             value = distributed_map.get(key)
             time.sleep(0.01)
             new_value = value + 1
-            if distributed_map.replace(key, value, new_value):
+            if distributed_map.replace_if_same(key, value, new_value):
                 break
-    print("Finished", client_number, "! Result =", distributed_map.get(key))
+    with threading.Lock():
+        print("Finished client ", client_number, "! Result =", distributed_map.get(key))
 
 
 def test_map_with_lock():
     print("Test with no locking: ")
-    no_locking(1)
-    # print("Test with pessimistic locking: ")
-    # pessimistic_locking(1)
-    # print("Test with optimistic locking: ")
-    # optimistic_locking(1)
+    client1 = threading.Thread(target=no_locking, args=(1,))
+    client2 = threading.Thread(target=no_locking, args=(2,))
+    client3 = threading.Thread(target=no_locking, args=(3,))
+    client1.start()
+    client2.start()
+    client3.start()
+    client1.join()
+    client2.join()
+    client3.join()
+    print("------------")
+    print("Test with pessimistic locking: ")
+    client1 = threading.Thread(target=pessimistic_locking, args=(1,))
+    client2 = threading.Thread(target=pessimistic_locking, args=(2,))
+    client3 = threading.Thread(target=pessimistic_locking, args=(3,))
+    client1.start()
+    client2.start()
+    client3.start()
+    client1.join()
+    client2.join()
+    client3.join()
+    print("------------")
+    print("Test with optimistic locking: ")
+    client1 = threading.Thread(target=optimistic_locking, args=(1,))
+    client2 = threading.Thread(target=optimistic_locking, args=(2,))
+    client3 = threading.Thread(target=optimistic_locking, args=(3,))
+    client1.start()
+    client2.start()
+    client3.start()
+    client1.join()
+    client2.join()
+    client3.join()
 
 
 def bounded_queue_client(client_type):
