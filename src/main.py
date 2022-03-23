@@ -17,15 +17,22 @@ def no_locking(client_number):
     distributed_map = client.get_map("map1").blocking()
     key = "1"
     distributed_map.put(key, 0)
-    with threading.Lock():
+    lock = threading.Lock()
+    lock.acquire()
+    try:
         print("Starting client", client_number)
+    finally:
+        lock.release()
     for i in range(1000):
         value = distributed_map.get(key)
         time.sleep(0.01)
         value += 1
         distributed_map.put(key, value)
-    with threading.Lock():
+    lock.acquire()
+    try:
         print("Finished client", client_number, "!  Result =", distributed_map.get(key))
+    finally:
+        lock.release()
     client.shutdown()
 
 
@@ -34,8 +41,12 @@ def pessimistic_locking(client_number):
     distributed_map = client.get_map("map2").blocking()
     key = "1"
     distributed_map.put(key, 0)
-    with threading.Lock():
+    lock = threading.Lock()
+    lock.acquire()
+    try:
         print("Starting client", client_number)
+    finally:
+        lock.release()
     for i in range(1000):
         distributed_map.lock(key)
         try:
@@ -45,8 +56,11 @@ def pessimistic_locking(client_number):
             distributed_map.put(key, value)
         finally:
             distributed_map.unlock(key)
-    with threading.Lock():
+    lock.acquire()
+    try:
         print("Finished client", client_number, "!  Result =", distributed_map.get(key))
+    finally:
+        lock.release()
     client.shutdown()
 
 
@@ -55,8 +69,12 @@ def optimistic_locking(client_number):
     distributed_map = client.get_map("map3").blocking()
     key = "1"
     distributed_map.put(key, 0)
-    with threading.Lock():
+    lock = threading.Lock()
+    lock.acquire()
+    try:
         print("Starting client", client_number)
+    finally:
+        lock.release()
     for i in range(1000):
         while True:
             value = distributed_map.get(key)
@@ -64,8 +82,12 @@ def optimistic_locking(client_number):
             new_value = value + 1
             if distributed_map.replace_if_same(key, value, new_value):
                 break
-    with threading.Lock():
+    lock = threading.Lock()
+    lock.acquire()
+    try:
         print("Finished client ", client_number, "! Result =", distributed_map.get(key))
+    finally:
+        lock.release()
     client.shutdown()
 
 
@@ -105,9 +127,35 @@ def test_map_with_lock():
 
 
 def bounded_queue_client(client_type, client_number):
+    lock = threading.Lock()
     if client_type == "r":
-        with threading.Lock():
+        if client_number == -1:
+            time.sleep(10)
+            lock.acquire()
+            try:
+                print("Starting reading client")
+            finally:
+                lock.release()
+            client = hazelcast.HazelcastClient()
+            queue = client.get_queue("bounded_queue").blocking()
+            lock.acquire()
+            try:
+                print("Reading element from queue")
+            finally:
+                lock.release()
+            queue.take()
+            lock.acquire()
+            try:
+                print("Finished reading client")
+            finally:
+                lock.release()
+            client.shutdown()
+            return
+        lock.acquire()
+        try:
             print("Starting reading client", client_number)
+        finally:
+            lock.release()
         client = hazelcast.HazelcastClient()
         queue = client.get_queue("bounded_queue").blocking()
         numbers = []
@@ -116,28 +164,56 @@ def bounded_queue_client(client_type, client_number):
             if n == -1:
                 break
             numbers.append(n)
-        for n in numbers:
-            with threading.Lock():
-                print("Client ", client_number, " read ", n)
-        with threading.Lock():
+        queue.put(-1)
+        lock.acquire()
+        try:
+            print("Client ", client_number, " read ", numbers)
+        finally:
+            lock.release()
+        lock.acquire()
+        try:
+            print("Client ", client_number, " read ", len(numbers),  " elements from queue")
+        finally:
+            lock.release()
+        lock.acquire()
+        try:
             print("Finished reading client", client_number)
+        finally:
+            lock.release()
         client.shutdown()
     elif client_type == "w":
-        print("Starting writing client")
+        lock.acquire()
+        try:
+            print("Starting writing client")
+        finally:
+            lock.release()
         client = hazelcast.HazelcastClient()
         queue = client.get_queue("bounded_queue").blocking()
-        print("Putting values into queue.")
+        lock.acquire()
+        try:
+            print("Putting values into queue.")
+        finally:
+            lock.release()
         for i in range(100):
             queue.put(i)
         queue.put(-1)
         if client_number == 2:
-            print("Trying to put into full queue:")
+            lock.acquire()
             try:
-                queue.put(-2)
+                print("Trying to put into full queue:")
+            finally:
+                lock.release()
+            queue.put(-2)
+            lock.acquire()
+            try:
                 print("Extra put done.")
-            except hazelcast.errors.IllegalStateError:
-                print("Error! Queue is full. No more elements can be added.")
-        print("Finished writing client")
+            finally:
+                lock.release()
+        lock.acquire()
+        try:
+            print("Finished writing client")
+        finally:
+            lock.release()
         client.shutdown()
     else:
         return
@@ -145,12 +221,19 @@ def bounded_queue_client(client_type, client_number):
 
 def test_bounded_queue(test_type):
     if test_type == 1:
-        bounded_queue_client("w", 2)
+        client1 = threading.Thread(target=bounded_queue_client, args=("w", 2,))
+        client2 = threading.Thread(target=bounded_queue_client, args=("r", -1,))
+        client1.start()
+        client2.start()
+        client1.join()
+        client2.join()
         return
     client1 = threading.Thread(target=bounded_queue_client, args=("r", 1,))
     client2 = threading.Thread(target=bounded_queue_client, args=("r", 2,))
+    client3 = threading.Thread(target=bounded_queue_client, args=("w", 1,))
     print("Start writing items into bounded queue.")
-    bounded_queue_client("w", 1)
+    client3.start()
+    client3.join()
     print("Start reading items from queue.")
     client1.start()
     client2.start()
